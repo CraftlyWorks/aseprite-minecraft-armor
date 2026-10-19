@@ -80,12 +80,9 @@ M.FACE_NAMES = {
   left="Left Side", back="Back",
 }
 
--- Face rectangles { x, y, w, h } of a part on a 64x32 texture.
--- "right"/"left" are the wearer's right/left.
-function M.faceRects(partId)
-  local p = M.PARTS[partId]
-  local u, v = p.uv[1], p.uv[2]
-  local w, h, d = p.size[1], p.size[2], p.size[3]
+-- Face rectangles { x, y, w, h } of a w x h x d box whose box-UV starts at
+-- (u, v). "right"/"left" are the wearer's right/left.
+function M.boxFaceRects(u, v, w, h, d)
   return {
     top    = { u + d,         v,     w, d },
     bottom = { u + d + w,     v,     w, d },
@@ -94,6 +91,44 @@ function M.faceRects(partId)
     left   = { u + d + w,     v + d, d, h },
     back   = { u + d + w + d, v + d, w, h },
   }
+end
+
+-- Face rectangles of an armor part on a 64x32 texture.
+function M.faceRects(partId)
+  local p = M.PARTS[partId]
+  return M.boxFaceRects(p.uv[1], p.uv[2], p.size[1], p.size[2], p.size[3])
+end
+
+-- Grid colour of a part on a layer, as an rgba pixel value.
+local function gridColor(layer, partId)
+  for _, region in ipairs(M.GRIDS[layer]) do
+    if region.part == partId then
+      local c = region.color
+      return c[1] | (c[2] << 8) | (c[3] << 16) | 0xff000000
+    end
+  end
+  return nil
+end
+
+-- Boxes for the renderer: every armor piece that has a texture and isn't
+-- hidden in `show` (e.g. { boots=false }). Each face outline uses the same
+-- colour as that part's grid on the texture.
+function M.armorBoxes(textures, show)
+  local boxes = {}
+  for _, piece in ipairs(M.PIECES) do
+    local tex = textures[piece.layer]
+    if tex and (not show or show[piece.id] ~= false) then
+      for _, ref in ipairs(piece.bones) do
+        local bone = M.BONES[ref[1]]
+        local part = M.PARTS[bone.part]
+        boxes[#boxes + 1] = {
+          tex=tex, uv=part.uv, size=part.size, from=bone.from, grow=ref[2],
+          mirror=bone.mirror, outline=gridColor(piece.layer, bone.part),
+        }
+      end
+    end
+  end
+  return boxes
 end
 
 -- 64x32, 128x64, 256x128...

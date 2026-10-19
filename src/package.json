@@ -2,7 +2,7 @@
   "name": "minecraft-armor-tools",
   "displayName": "Minecraft Armor Tools",
   "description": "Body-part grids, linked texture files and a live 3D preview for Minecraft armor textures.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "CraftlyWorks",
     "url": "https://github.com/CraftlyWorks/aseprite-minecraft-armor"

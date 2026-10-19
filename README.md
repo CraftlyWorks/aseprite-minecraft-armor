@@ -2,7 +2,7 @@
 
 An Aseprite extension for drawing Minecraft armor textures. It shows where
 every body part goes, links the two armor texture files together and gives
-you a live 3D preview while you draw.
+you a live 3D preview while you draw, on its own or on a player.
 
 ![3D preview](docs/preview.png)
 
@@ -18,6 +18,10 @@ you a live 3D preview while you draw.
   finds the matching file and can open it for you.
 - **Live 3D preview**: see the helmet, chestplate, leggings and boots on a 3D
   model. It updates after every stroke, even before you save.
+- **Player preview**: see the armor on a player. Type a player name to use
+  their skin, or load a skin file. Classic and slim arms are supported.
+- **Outlines and shading**: show each part's grid colour on the 3D model, and
+  turn shading off to see the exact texture colours.
 - **Save both at once**: save the whole armor set with one command.
 
 ## Install
@@ -90,6 +94,12 @@ Tip: give *Save Armor Set* a shortcut in *Edit > Keyboard Shortcuts*.
 | Reset the view | Double-click |
 | Show or hide a piece | Use the checkboxes under the preview |
 | Jump to an angle | Click Front, Side, Back or 3/4 |
+| Show the armor on a player | Tick *Show player* |
+| Use a player's skin | Type their name and click *Get Skin* |
+| Use a skin file | Click the file button under the name and pick a PNG |
+| Switch arm width | Pick *Classic arms* or *Slim arms* |
+| See exact texture colours | Untick *Shading* |
+| See which grid colour is where | Tick *Outlines* |
 
 ## Good to know
 
@@ -100,6 +110,11 @@ Tip: give *Save Armor Set* a shortcut in *Edit > Keyboard Shortcuts*.
   that aren't open are read from disk; *Reload from Disk* refreshes them.
 - The left arm and left leg use the same pixels as the right ones, mirrored,
   just like in Minecraft.
+- The first time the preview reads a file from disk or downloads a skin,
+  Aseprite asks for permission. Choose *Give full access* to only be asked
+  once. Downloading skins uses `curl`, which comes with Windows 10 and newer,
+  macOS and most Linux systems.
+- Until you pick a skin, *Show player* uses a plain grey figure.
 
 ## For developers
 
@@ -116,11 +131,15 @@ docs/    README images (made by docs/make_images.lua)
 | `src/mca_grids.lua` | Body-part grids |
 | `src/mca_preview.lua` | Preview window |
 | `src/mca_render.lua` | 3D renderer |
+| `src/mca_skin.lua` | Player skins and the player model |
+| `src/mca_png.lua` | Reads PNG files without opening them in Aseprite |
+| `src/mca_io.lua` | Reading files and downloading skins |
 | `src/mca_compat.lua` | File paths on every system and support for older Aseprite versions |
 
 - `./build.sh` builds `dist/minecraft-armor-tools.aseprite-extension`.
 - `tests/run.sh` runs all tests. Set `ASEPRITE` to your Aseprite program if
-  it isn't found. On Windows, run the scripts from Git Bash or WSL.
+  it isn't found, and `ONLINE=1` to also test downloading a skin. On Windows,
+  run the scripts from Git Bash or WSL.
 
 ## License
 

@@ -3,6 +3,7 @@
 --   aseprite -b --script-param src=<src dir> --script-param l1=<layer 1 png>
 --     --script-param l2=<layer 2 png> --script-param out=<png> --script tests/test_render.lua
 package.path = app.params.src .. "/?.lua;" .. package.path
+local layout = require("mca_layout")
 local render = require("mca_render")
 
 local textures = {
@@ -23,7 +24,7 @@ sheet:clear(app.pixelColor.rgba(52, 52, 58, 255))
 local total, empty = 0, 0
 for i, v in ipairs(views) do
   local t0 = os.clock()
-  local img = render.render{ width=W, height=H, textures=textures, yaw=v.yaw, pitch=v.pitch }
+  local img = render.render{ width=W, height=H, boxes=layout.armorBoxes(textures), yaw=v.yaw, pitch=v.pitch }
   total = total + (os.clock() - t0)
   local drawn = 0
   for it in img:pixels() do if (it() >> 24) > 0 then drawn = drawn + 1 end end

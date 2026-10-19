@@ -2,6 +2,7 @@
 --   aseprite -b --script-param src=<src dir> --script-param fixtures=<tests/fixtures>
 --     --script-param out=<docs dir> --script docs/make_images.lua
 package.path = app.params.src .. "/?.lua;" .. package.path
+local layout = require("mca_layout")
 local render = require("mca_render")
 local pc = app.pixelColor
 local BG = pc.rgba(40, 42, 48, 255)
@@ -13,8 +14,8 @@ end
 -- layout.png: Layer 1 and Layer 2 side by side, 8x.
 local S, GAP = 8, 32
 local l1, l2 = load("humanoid"), load("humanoid_leggings")
-local layout = Image(64 * S * 2 + GAP * 3, 32 * S + GAP * 2, ColorMode.RGB)
-layout:clear(BG)
+local sheetLayout = Image(64 * S * 2 + GAP * 3, 32 * S + GAP * 2, ColorMode.RGB)
+sheetLayout:clear(BG)
 for i, img in ipairs{ l1, l2 } do
   local ox = GAP + (i - 1) * (64 * S + GAP)
   for it in img:pixels() do
@@ -22,11 +23,11 @@ for i, img in ipairs{ l1, l2 } do
     local light = ((it.x + it.y) % 2 == 0) and 58 or 50
     if (c >> 24) == 0 then c = pc.rgba(light, light, light + 6, 255) end
     for dy = 0, S - 1 do
-      for dx = 0, S - 1 do layout:drawPixel(ox + it.x * S + dx, GAP + it.y * S + dy, c) end
+      for dx = 0, S - 1 do sheetLayout:drawPixel(ox + it.x * S + dx, GAP + it.y * S + dy, c) end
     end
   end
 end
-layout:saveAs(app.fs.joinPath(app.params.out, "layout.png"))
+sheetLayout:saveAs(app.fs.joinPath(app.params.out, "layout.png"))
 
 -- preview.png: the 3D preview from three angles, then the leggings alone.
 -- The helmet overlay is cleared here (in real armor it's mostly empty) so
@@ -42,7 +43,7 @@ local views = {
 local sheet = Image(W * #views, H, ColorMode.RGB)
 sheet:clear(BG)
 for i, v in ipairs(views) do
-  sheet:drawImage(render.render{ width=W, height=H, textures=textures, yaw=v.yaw, pitch=v.pitch, show=v.show },
+  sheet:drawImage(render.render{ width=W, height=H, boxes=layout.armorBoxes(textures, v.show), yaw=v.yaw, pitch=v.pitch },
                   Point((i - 1) * W, 0))
 end
 sheet:saveAs(app.fs.joinPath(app.params.out, "preview.png"))

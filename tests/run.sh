@@ -2,6 +2,7 @@
 # Runs every test in Aseprite's batch mode (no window needed).
 #   tests/run.sh
 # Set ASEPRITE to the Aseprite executable if it isn't in the default place.
+# Set ONLINE=1 to also test downloading a skin from Mojang.
 set -e
 cd "$(dirname "$0")/.."
 
@@ -30,6 +31,9 @@ if grep -n ":drawSprite(" src/*.lua | grep -v -- "--"; then echo "FAIL"; exit 1;
 
 echo "== layout";   "$A" -b --script-param src="$SRC" --script tests/test_layout.lua
 echo "== compat";   "$A" -b --script-param src="$SRC" --script tests/test_compat.lua
+echo "== png";      "$A" -b --script-param src="$SRC" --script-param dir="$FIX/png" \
+  --script-param files="$FIX/humanoid/test_armor.png;$FIX/legacy/test_armor_layer_1.png;$FIX/skins/test_skin.png" --script tests/test_png.lua
+echo "== skin";     "$A" -b --script-param src="$SRC" --script-param fixtures="$FIX" --script-param online="${ONLINE:-0}" --script tests/test_skin.lua
 echo "== textures"; "$A" -b --script-param src="$SRC" \
   --script-param files="$FIX/humanoid/test_armor.png;$FIX/humanoid_leggings/test_armor.png;$FIX/legacy/test_armor_layer_1.png;$FIX/legacy/test_armor_layer_2.png" \
   --script-param palette="$FIX/legacy/test_armor_layer_1.png" --script tests/test_textures.lua

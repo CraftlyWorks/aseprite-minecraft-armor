@@ -1,8 +1,10 @@
--- Software renderer for the armor model: an orthographic, z-buffered
--- rasterizer that maps texture pixels onto the model boxes and returns an
--- Image ready to be drawn on a dialog canvas.
+-- Software renderer for the preview: an orthographic, z-buffered rasterizer
+-- that maps texture pixels onto boxes (armor pieces, the player model) and
+-- returns an Image ready to be drawn on a dialog canvas.
 
 local layout = require("mca_layout")
+local fileio = require("mca_io")
+local png = require("mca_png")
 
 local R = {}
 
@@ -18,6 +20,8 @@ local ALPHA_CUTOFF = 26 << 24
 local FACE_SHADE = { top=1.0, bottom=0.55, front=0.86, back=0.86, right=0.7, left=0.7 }
 -- Extra darkening for the inside of a box (seen through transparent pixels).
 local INSIDE_SHADE = 0.6
+-- Face outlines are drawn this many pixels wide.
+local OUTLINE_PX = 1.0
 
 -- Vertical centre of the model, used as the rotation pivot.
 local MODEL_CENTER_Y = 16
@@ -56,6 +60,11 @@ function R.textureFromImage(img, palette)
       px[it.y * w + it.x] = c
     end
   end
+  return R.textureFromPixels(w, h, px)
+end
+
+-- Texture from decoded pixels ({ [y*w + x] = rgba }).
+function R.textureFromPixels(w, h, px)
   return { w=w, h=h, scale=w / layout.BASE_W, px=px }
 end
 
@@ -121,16 +130,14 @@ function R.textureFromSprite(sprite, frame)
   return R.textureFromImage(out)
 end
 
--- Reads a texture straight from disk without opening a tab.
+-- Reads a PNG from disk without opening it as a document. Returns the
+-- texture, or nil and an error message.
 function R.textureFromFile(path)
-  local ok, img = pcall(Image, { fromFile=path })
-  if not ok or not img then return nil end
-  local palette
-  if img.colorMode == ColorMode.INDEXED then
-    local okPal, pal = pcall(Palette, { fromFile=path })
-    if okPal then palette = pal end
-  end
-  return R.textureFromImage(img, palette)
+  local data, err = fileio.readFile(path)
+  if not data then return nil, err end
+  local w, h, px = png.decode(data)
+  if not w then return nil, h end
+  return R.textureFromPixels(w, h, px)
 end
 
 ---------------------------------------------------------------------------
@@ -138,13 +145,13 @@ end
 
 -- The six faces of an inflated box as parallelograms in model space:
 -- o = corner at texture pixel (0,0), du/dv = edges along texture x/y.
-local function boxFaces(bone, grow)
-  local part = layout.PARTS[bone.part]
-  local w, h, d = part.size[1], part.size[2], part.size[3]
-  local x0, y0, z0 = bone.from[1] - grow, bone.from[2] - grow, bone.from[3] - grow
-  local x1, y1, z1 = bone.from[1] + w + grow, bone.from[2] + h + grow, bone.from[3] + d + grow
+local function boxFaces(box)
+  local w, h, d = box.size[1], box.size[2], box.size[3]
+  local grow = box.grow or 0
+  local x0, y0, z0 = box.from[1] - grow, box.from[2] - grow, box.from[3] - grow
+  local x1, y1, z1 = box.from[1] + w + grow, box.from[2] + h + grow, box.from[3] + d + grow
   local dx, dy, dz = x1 - x0, y1 - y0, z1 - z0
-  local rects = layout.faceRects(bone.part)
+  local rects = layout.boxFaceRects(box.uv[1], box.uv[2], w, h, d)
   local faces = {
     { id="front",  o={x0, y1, z1}, du={ dx, 0, 0}, dv={0, -dy, 0}, n={ 0, 0,  1} },
     { id="back",   o={x1, y1, z0}, du={-dx, 0, 0}, dv={0, -dy, 0}, n={ 0, 0, -1} },
@@ -156,7 +163,7 @@ local function boxFaces(bone, grow)
   for _, f in ipairs(faces) do
     f.rect = rects[f.id]
     f.shade = FACE_SHADE[f.id]
-    if bone.mirror then
+    if box.mirror then
       -- Mirror across the box's own centre: the "right side" pixels land on
       -- the outer (left) side and every face is flipped horizontally.
       f.o[1] = x0 + x1 - f.o[1]
@@ -190,9 +197,18 @@ end
 
 -- opts = {
 --   width, height,
---   textures = { humanoid=tex, humanoid_leggings=tex },  -- either may be nil
---   show = { helmet=bool, chestplate=bool, leggings=bool, boots=bool },
---   yaw, pitch (degrees), zoom (px per texel), panX, panY (px)
+--   boxes = { box, ... }, where box = {
+--     tex,                    -- texture (see above)
+--     uv = { u, v },          -- box-UV offset on a 64-wide texture
+--     size = { w, h, d },     -- in texels
+--     from = { x, y, z },     -- min corner in model space
+--     grow,                   -- inflation, like Minecraft's CubeDeformation
+--     mirror,                 -- left limbs that reuse the right limb's pixels
+--     opaque,                 -- ignore alpha (player skin base layer)
+--     outline,                -- rgba colour for face outlines (optional)
+--   },
+--   yaw, pitch (degrees), zoom (px per texel), panX, panY (px),
+--   shading (default true), outlines (default false)
 -- }
 -- Returns an RGBA Image; empty pixels are transparent.
 function R.render(opts)
@@ -201,6 +217,8 @@ function R.render(opts)
   local cyaw, syaw = cos(rad(opts.yaw or 0)), sin(rad(opts.yaw or 0))
   local cp, sp = cos(rad(opts.pitch or 0)), sin(rad(opts.pitch or 0))
   local cx, cy = W / 2 + (opts.panX or 0), H / 2 + (opts.panY or 0)
+  local shading = opts.shading ~= false
+  local outlines = opts.outlines == true
 
   -- Rotate a model-space vector into view space (x right, y up, z toward viewer).
   local function rotate(x, y, z)
@@ -211,69 +229,81 @@ function R.render(opts)
 
   local zbuf, cbuf = {}, {}
   local shadeCaches = {}
-  local bias = 0
 
-  for _, piece in ipairs(layout.PIECES) do
-    local tex = opts.textures[piece.layer]
-    if tex and (not opts.show or opts.show[piece.id] ~= false) then
-      local texW, px, s = tex.w, tex.px, tex.scale
-      for _, ref in ipairs(piece.bones) do
-        -- Later bones win ties on coplanar faces (e.g. arms over the chest).
-        bias = bias + 1e-3
-        for _, f in ipairs(boxFaces(layout.BONES[ref[1]], ref[2])) do
-          local ox, oy, oz = rotate(f.o[1], f.o[2] - MODEL_CENTER_Y, f.o[3])
-          ox, oy = cx + ox * zoom, cy - oy * zoom
-          local ux, uy, uz = rotate(f.du[1], f.du[2], f.du[3])
-          ux, uy = ux * zoom, -uy * zoom
-          local vx, vy, vz = rotate(f.dv[1], f.dv[2], f.dv[3])
-          vx, vy = vx * zoom, -vy * zoom
-          local det = ux * vy - vx * uy
-          if abs(det) > 1e-6 then
-            local _, _, nz = rotate(f.n[1], f.n[2], f.n[3])
-            local shade = f.shade * (nz < 0 and INSIDE_SHADE or 1)
-            local cache = shadeCaches[shade]
-            if not cache then cache = {}; shadeCaches[shade] = cache end
+  for index, box in ipairs(opts.boxes) do
+    local tex = box.tex
+    local texW, px, s = tex.w, tex.px, tex.scale
+    -- Later boxes win ties on coplanar faces (e.g. arms over the chest).
+    local bias = index * 1e-3
+    local opaque = box.opaque
+    local outlinePacked = outlines and box.outline and spack("<I4", box.outline | 0xff000000) or nil
 
-            local ru, rv = floor(f.rect[1] * s), floor(f.rect[2] * s)
-            local rw, rh = floor(f.rect[3] * s), floor(f.rect[4] * s)
-            local idet = 1 / det
-            local ax, bx = vy * idet, -uy * idet
-            local ymin = max(0, floor(min(oy, oy + uy, oy + vy, oy + uy + vy)))
-            local ymax = min(H - 1, floor(max(oy, oy + uy, oy + vy, oy + uy + vy)))
-            local fz = oz + bias
+    for _, f in ipairs(boxFaces(box)) do
+      local ox, oy, oz = rotate(f.o[1], f.o[2] - MODEL_CENTER_Y, f.o[3])
+      ox, oy = cx + ox * zoom, cy - oy * zoom
+      local ux, uy, uz = rotate(f.du[1], f.du[2], f.du[3])
+      ux, uy = ux * zoom, -uy * zoom
+      local vx, vy, vz = rotate(f.dv[1], f.dv[2], f.dv[3])
+      vx, vy = vx * zoom, -vy * zoom
+      local det = ux * vy - vx * uy
+      if abs(det) > 1e-6 then
+        local shade = 1
+        if shading then
+          local _, _, nz = rotate(f.n[1], f.n[2], f.n[3])
+          shade = f.shade * (nz < 0 and INSIDE_SHADE or 1)
+        end
+        local cache = shadeCaches[shade]
+        if not cache then cache = {}; shadeCaches[shade] = cache end
 
-            for py = ymin, ymax do
-              local ry = py + 0.5 - oy
-              local rx0 = 0.5 - ox
-              -- Texture coords along this row: a = a0 + ax*x, b = b0 + bx*x (0..1)
-              local a0 = (rx0 * vy - ry * vx) * idet
-              local b0 = (ry * ux - rx0 * uy) * idet
-              local lo, hi = clampSpan(a0, ax, 0, W - 1)
-              if lo <= hi then lo, hi = clampSpan(b0, bx, lo, hi) end
-              local rowBase = py * W
-              for x = lo, hi do
-                local a, b = a0 + ax * x, b0 + bx * x
-                local tx, ty = floor(a * rw), floor(b * rh)
-                if tx >= rw then tx = rw - 1 elseif tx < 0 then tx = 0 end
-                if ty >= rh then ty = rh - 1 elseif ty < 0 then ty = 0 end
-                local c = px[(rv + ty) * texW + ru + tx]
-                if c and c >= ALPHA_CUTOFF then
-                  local z = fz + a * uz + b * vz
-                  local i = rowBase + x
-                  local zb = zbuf[i]
-                  if not zb or z > zb then
-                    zbuf[i] = z
-                    local packed = cache[c]
-                    if not packed then
-                      local r = floor((c & 0xff) * shade + 0.5)
-                      local g = floor(((c >> 8) & 0xff) * shade + 0.5)
-                      local bl = floor(((c >> 16) & 0xff) * shade + 0.5)
-                      packed = spack("<I4", r | (g << 8) | (bl << 16) | 0xff000000)
-                      cache[c] = packed
-                    end
-                    cbuf[i] = packed
-                  end
+        local ru, rv = floor(f.rect[1] * s), floor(f.rect[2] * s)
+        local rw, rh = floor(f.rect[3] * s), floor(f.rect[4] * s)
+        local idet = 1 / det
+        local ax, bx = vy * idet, -uy * idet
+        local ymin = max(0, floor(min(oy, oy + uy, oy + vy, oy + uy + vy)))
+        local ymax = min(H - 1, floor(max(oy, oy + uy, oy + vy, oy + uy + vy)))
+        local fz = oz + bias
+        -- Pixel distance to the edges per unit of a and b (for outlines).
+        local ka = abs(det) / max(1e-6, (vx * vx + vy * vy) ^ 0.5)
+        local kb = abs(det) / max(1e-6, (ux * ux + uy * uy) ^ 0.5)
+
+        for py = ymin, ymax do
+          local ry = py + 0.5 - oy
+          local rx0 = 0.5 - ox
+          -- Texture coords along this row: a = a0 + ax*x, b = b0 + bx*x (0..1)
+          local a0 = (rx0 * vy - ry * vx) * idet
+          local b0 = (ry * ux - rx0 * uy) * idet
+          local lo, hi = clampSpan(a0, ax, 0, W - 1)
+          if lo <= hi then lo, hi = clampSpan(b0, bx, lo, hi) end
+          local rowBase = py * W
+          for x = lo, hi do
+            local a, b = a0 + ax * x, b0 + bx * x
+            local packed
+            if outlinePacked and (a * ka < OUTLINE_PX or (1 - a) * ka < OUTLINE_PX
+                                  or b * kb < OUTLINE_PX or (1 - b) * kb < OUTLINE_PX) then
+              packed = outlinePacked
+            else
+              local tx, ty = floor(a * rw), floor(b * rh)
+              if tx >= rw then tx = rw - 1 elseif tx < 0 then tx = 0 end
+              if ty >= rh then ty = rh - 1 elseif ty < 0 then ty = 0 end
+              local c = px[(rv + ty) * texW + ru + tx]
+              if c and (opaque or c >= ALPHA_CUTOFF) then
+                packed = cache[c]
+                if not packed then
+                  local r = floor((c & 0xff) * shade + 0.5)
+                  local g = floor(((c >> 8) & 0xff) * shade + 0.5)
+                  local bl = floor(((c >> 16) & 0xff) * shade + 0.5)
+                  packed = spack("<I4", r | (g << 8) | (bl << 16) | 0xff000000)
+                  cache[c] = packed
                 end
+              end
+            end
+            if packed then
+              local z = fz + a * uz + b * vz
+              local i = rowBase + x
+              local zb = zbuf[i]
+              if not zb or z > zb then
+                zbuf[i] = z
+                cbuf[i] = packed
               end
             end
           end

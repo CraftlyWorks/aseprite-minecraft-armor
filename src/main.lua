@@ -7,7 +7,8 @@
 -- Aseprite keeps one Lua state for every extension and never clears
 -- package.loaded, so after an update require() would hand back the
 -- previous version's modules. Drop them before loading.
-local MODULES = { "mca_compat", "mca_layout", "mca_render", "mca_grids", "mca_preview" }
+local MODULES = { "mca_compat", "mca_io", "mca_png", "mca_layout", "mca_render", "mca_skin",
+                  "mca_grids", "mca_preview" }
 local function forgetModules()
   for _, name in ipairs(MODULES) do
     package.loaded[name] = nil
